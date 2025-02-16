@@ -1,65 +1,56 @@
-import os
 import base64
-import uuid
 import traceback
 from flask import Flask, request, jsonify
 from paddleocr import PaddleOCR
 from io import BytesIO
+from gevent import monkey
+
+monkey.patch_all()  # For async compatibility
 
 app = Flask(__name__)
 
-# Initialize OCR once (to avoid reloading on every request)
-ocr = PaddleOCR(use_angle_cls=True, lang='en')
+# Initialize OCR once (thread-safe)
+ocr = PaddleOCR(use_angle_cls=True, lang='en', use_gpu=False)  # Set use_gpu=True if available
 
-TEMP_IMAGE_FOLDER = "temp_images"  # Store temporary images
+# Rate limiter (optional)
+from flask_limiter import Limiter
 
-# Ensure the folder exists
-os.makedirs(TEMP_IMAGE_FOLDER, exist_ok=True)
+limiter = Limiter(app=app, key_func=lambda: request.remote_addr)
+
 
 def process_ocr(base64_string):
     try:
-        # Generate a unique filename
-        file_name = f"{uuid.uuid4().hex}.png"
-        file_path = os.path.join(TEMP_IMAGE_FOLDER, file_name)
+        # Remove metadata if exists and decode
+        header, encoded = base64_string.split(",", 1) if "," in base64_string else ("", base64_string)
+        image_data = base64.b64decode(encoded)
 
-        # Decode base64 and save as PNG file
-        base64_string = base64_string.split(",")[-1]  # Remove metadata if exists
-        image_data = base64.b64decode(base64_string)
+        # Use in-memory bytes instead of temp files
+        image_stream = BytesIO(image_data)
 
-        with open(file_path, "wb") as f:
-            f.write(image_data)
+        # Perform OCR
+        result = ocr.ocr(image_stream.read(), cls=True)
 
-        # Perform OCR on the saved image
-        result = ocr.ocr(file_path, cls=True)
-
-        # Extract text from OCR result
-        extracted_text = [word[1][0] for line in result for word in line if word]
-
-        # Remove the temporary file
-        # os.remove(file_path)
-
-        return extracted_text
+        return [word[1][0] for line in result for word in line if word]
 
     except Exception as e:
-        print(f"Error in OCR processing: {e}")
+        app.logger.error(f"OCR Error: {str(e)}")
         return []
+
 
 @app.route('/extract_text', methods=['POST'])
 def extract_text():
     try:
         data = request.get_json()
-        base64_image = data.get("image")
+        if not data or "image" not in data:
+            return jsonify({"error": "Missing image data"}), 400
 
-        if not base64_image:
-            return jsonify({"error": "No image data provided"}), 400
-
-        extracted_text = process_ocr(base64_image)
-
+        extracted_text = process_ocr(data["image"])
         return jsonify({"text": extracted_text})
 
     except Exception as e:
-        error_message = traceback.format_exc()
-        return jsonify({"error": "Internal Server Error", "details": str(e), "traceback": error_message}), 500
+        app.logger.error(traceback.format_exc())
+        return jsonify({"error": "Processing failed"}), 500
+
 
 if __name__ == '__main__':
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    app.run(host="0.0.0.0", port=5000)
