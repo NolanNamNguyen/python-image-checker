@@ -6,8 +6,7 @@ import traceback
 from flask import Flask, request, jsonify
 from paddleocr import PaddleOCR
 from io import BytesIO
-from gevent import monkey
-from gevent import Timeout
+from gevent import Timeout, monkey, lock, getcurrent
 from werkzeug.exceptions import HTTPException
 import psutil
 
@@ -20,14 +19,25 @@ app = Flask(__name__)
 app.config.from_pyfile('config.py')
 
 # Initialize OCR once (thread-safe)
+# ocr = PaddleOCR(
+#     use_angle_cls=True,
+#     lang='en',
+#     use_gpu=False,
+#     enable_mkldnn=False,  # Disable MKLDNN temporarily
+#     det_limit_side_len=1024,
+#     rec_algorithm='SVTR_LCNet',
+#     use_pdserving=False  # Add this line
+# )
+
 ocr = PaddleOCR(
-    use_angle_cls=True,
-    lang='en',
-    use_gpu=False,
-    enable_mkldnn=False,  # Disable MKLDNN temporarily
-    det_limit_side_len=1024,
-    rec_algorithm='SVTR_LCNet',
-    use_pdserving=False  # Add this line
+    use_angle_cls=True, lang='en', use_gpu=False,
+    rec_model_dir='/Users/buikhoi/Downloads/nam_helping/rec_det_models', 
+    det_model_dir='/Users/buikhoi/Downloads/nam_helping/rec_det_models',
+    cls_model_dir='/Users/buikhoi/Downloads/nam_helping/cls_model',
+    # enable_mkldnn=False,  # Disable MKLDNN temporarily
+    # det_limit_side_len=1024,
+    # rec_algorithm='SVTR_LCNet',
+    # use_pdserving=False  # Add this line
 )
 
 # Rate limiter (optional)
@@ -48,7 +58,7 @@ def add_headers(response):
 class ConcurrentOCR:
     def __init__(self, app):
         self.app = app
-        self.semaphore = gevent.lock.BoundedSemaphore(100)  # Max concurrent
+        self.semaphore = lock.BoundedSemaphore(100)  # Max concurrent
 
     def __call__(self, environ, start_response):
         with self.semaphore:
@@ -93,11 +103,24 @@ def process_ocr(base64_string):
 def extract_text():
     try:
         with Timeout(60):  # 1 minute timeout per request
+            content_type = request.headers.get('Content-Type', None)
+            # if 'multipart/form-data' in content_type:
+            #     image = request.files.get('image')
+            #     if not image:
+            #         return jsonify({"error": "Missing image data"}), 400
+                
+            #     # Convert FileStorage to base64 string
+            #     image_string = base64.b64encode(image.read())
+
+            #     extracted_text = process_ocr(image_string)
+            #     return jsonify({"text": extracted_text})
+            # else:
             data = request.get_json()
             if not data or "image" not in data:
                 return jsonify({"error": "Missing image data"}), 400
+            image = data["image"]
 
-            extracted_text = process_ocr(data["image"])
+            extracted_text = process_ocr(image)
             return jsonify({"text": extracted_text})
 
     except Timeout:
@@ -113,7 +136,7 @@ def extract_text():
 def health_check():
     return jsonify({
         "status": "ok",
-        "concurrent": len(gevent.getcurrent().threadpool)
+        "concurrent": len(getcurrent().threadpool)
     })
 
 
@@ -124,9 +147,9 @@ def metrics():
     return jsonify({
         "memory_mb": process.memory_info().rss // 1024 // 1024,
         "cpu_percent": process.cpu_percent(),
-        "active_requests": len(gevent.getcurrent().threadpool)
+        "active_requests": len(getcurrent().threadpool)
     })
 
 
 if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=5000)
+    app.run(host="0.0.0.0", port=8080)

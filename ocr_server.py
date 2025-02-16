@@ -10,7 +10,12 @@ monkey.patch_all()  # For async compatibility
 app = Flask(__name__)
 
 # Initialize OCR once (thread-safe)
-ocr = PaddleOCR(use_angle_cls=True, lang='en', use_gpu=False)  # Set use_gpu=True if available
+ocr = PaddleOCR(
+    use_angle_cls=True, lang='en', use_gpu=False,
+    rec_model_dir='/Users/buikhoi/Downloads/nam_helping/rec_det_models', 
+    det_model_dir='/Users/buikhoi/Downloads/nam_helping/rec_det_models',
+    cls_model_dir='/Users/buikhoi/Downloads/nam_helping/cls_model'
+)  # Set use_gpu=True if available
 
 # Rate limiter (optional)
 from flask_limiter import Limiter
@@ -53,4 +58,4 @@ def extract_text():
 
 
 if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=5000)
+    app.run(host="0.0.0.0", port=8080)
