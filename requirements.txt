@@ -1,0 +1,7 @@
+paddlepaddle==2.5.2
+paddleocr==2.7.0.3
+fitz==0.0.1.post2
+PyMuPDF==1.23.8
+Flask==2.3.2
+gevent==22.10.2
+flask-limiter==2.8.1
